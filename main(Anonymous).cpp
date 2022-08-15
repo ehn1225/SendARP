@@ -2,11 +2,7 @@
 #include "ethhdr.h"
 #include "arphdr.h"
 #include <fstream>
-#include <unistd.h>
-#include <string.h>
 #include <iostream>
-#include <sys/ioctl.h>
-#include <net/if.h>
 using namespace std;
 
 #pragma pack(push, 1)
@@ -17,12 +13,11 @@ struct EthArpPacket final {
 #pragma pack(pop)
 
 void usage() {
-	printf("syntax: send-arp-test <interface>\n");
-	printf("sample: send-arp-test wlan0\n");
+	printf("syntax: send-arp-test <interface> <sender ip> <target ip>\n");
+	printf("sample: send-arp-test wlan0 192.168.0.5 192.168.0.1\n");
 }
 int main(int argc, char* argv[]) {
 	if (argc != 4) {
-		//if no argument, or not fair of argument
 		usage();
 		return -1;
 	}
@@ -31,22 +26,9 @@ int main(int argc, char* argv[]) {
 	char errbuf[PCAP_ERRBUF_SIZE];
 	ifstream iface("/sys/class/net/" + string(dev) + "/address");
   	string MY_MAC((istreambuf_iterator<char>(iface)), istreambuf_iterator<char>());
-	
-    char MY_IP[15];
-    int fd;
-    struct ifreq ifr;
-    fd = socket(AF_INET, SOCK_DGRAM, 0);
-
-    ifr.ifr_addr.sa_family = AF_INET;
-    memcpy(ifr.ifr_name, dev, IFNAMSIZ - 1);
-    ioctl(fd, SIOCGIFADDR, &ifr);
-    close(fd);
-    strcpy(MY_IP, inet_ntoa(((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr));
-	cout << "System IP Address is : " << MY_IP << endl;
 	cout << "System MAC Address is : " << MY_MAC;
-	cout << "Sender IP Address is : " << argv[2] << endl;
 
-	pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf);
+	pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);
 	if (handle == nullptr) {
 		fprintf(stderr, "couldn't open device %s(%s)\n", dev, errbuf);
 		return -1;
@@ -62,7 +44,7 @@ int main(int argc, char* argv[]) {
 	packet.arp_.pln_ = Ip::SIZE;
 	packet.arp_.op_ = htons(ArpHdr::Request);
 	packet.arp_.smac_ = Mac(MY_MAC);
-	packet.arp_.sip_ = htonl(Ip(string(MY_IP)));
+	packet.arp_.sip_ = htonl(Ip("1.1.1.1")); //Anonymous
 	packet.arp_.tmac_ = Mac("00:00:00:00:00:00");
 	packet.arp_.tip_ = htonl(Ip(argv[2]));
 
@@ -83,8 +65,9 @@ int main(int argc, char* argv[]) {
 		struct EthArpPacket *eth_arp_packet = (struct EthArpPacket *)tmp_packet;
 		if(eth_arp_packet->eth_.type() == EthHdr::Arp){ //is arp packet?
 			if(eth_arp_packet->arp_.op() == ArpHdr::Reply){ //is arp reply?
-				if(eth_arp_packet->arp_.sip() == Ip(argv[2]) && eth_arp_packet->arp_.tip() == Ip(MY_IP)){
-				//Was it sent by the sender I wanted
+				if(eth_arp_packet->arp_.sip() == Ip(argv[2]) && eth_arp_packet->arp_.tmac() == Mac(MY_MAC)){
+					//Was it sent by the sender I wanted
+					cout << "Sender IP Address is : " << string(eth_arp_packet->arp_.sip()) << endl;
 					cout << "Sender MAC Address is : " << string(eth_arp_packet->arp_.smac()) << endl;
 					packet.eth_.dmac_ = eth_arp_packet->arp_.smac();
 					packet.eth_.smac_ = Mac(MY_MAC);
